@@ -1,47 +1,48 @@
-import streamlit as st
+# streamlit_4d_predictor.py
+
+import os
 import pandas as pd
 import numpy as np
-import joblib
-from tensorflow.keras.models import load_model
-
-st.set_page_config(page_title="4D AI Predictor", layout="wide")
-
-CSV_FILE = "singapore_4d_history.csv"
-MODEL_DIR = "models"
+import requests
+from bs4 import BeautifulSoup
+import streamlit as st
 
 # -----------------------
-# HELPER
+# CONFIG
+# -----------------------
+
+CSV_FILE = "singapore_4d_history.csv"
+RESULTS_URL = "https://www.singaporepools.com.sg/en/product/Pages/4d_results.aspx"
+MODEL_DIR = "models"
+os.makedirs(MODEL_DIR, exist_ok=True)
+
+np.random.seed(42)
+
+# -----------------------
+# HELPER FUNCTIONS
 # -----------------------
 
 def normalize_probs(p):
+    """Normalize an array to sum to 1 and clip negative values."""
     p = np.array(p)
     p = np.maximum(p, 0)
     s = p.sum()
-    if s == 0:
-        return np.ones(len(p)) / len(p)
-    return p / s
+    return p / s if s > 0 else np.ones(len(p)) / len(p)
 
-
-# -----------------------
-# LOAD MODELS (CACHED)
-# -----------------------
-
-@st.cache_resource
-def load_models():
-
-    xgb_models = {
-        "d1": joblib.load(f"{MODEL_DIR}/xgb_d1.pkl"),
-        "d2": joblib.load(f"{MODEL_DIR}/xgb_d2.pkl"),
-        "d3": joblib.load(f"{MODEL_DIR}/xgb_d3.pkl"),
-        "d4": joblib.load(f"{MODEL_DIR}/xgb_d4.pkl")
-    }
-
-    lstm_model = load_model(f"{MODEL_DIR}/lstm_model.keras")
-
-    feature_columns = joblib.load(f"{MODEL_DIR}/feature_columns.pkl")
-
-    return xgb_models, lstm_model, feature_columns
-
+def get_latest_website_date():
+    """Scrape the latest draw date from Singapore Pools website."""
+    try:
+        r = requests.get(RESULTS_URL, timeout=10)
+        soup = BeautifulSoup(r.text, "html.parser")
+        date_element = soup.find(
+            "span",
+            {"id":"ctl00_ctl37_g_1c8ad7f0_9b2f_4f9a_ba9f_5f6e3b3c2c40_lblDrawDate"}
+        )
+        if date_element:
+            return pd.to_datetime(date_element.text.strip(), errors="coerce")
+    except Exception as e:
+        print("Website check failed:", e)
+    return None
 
 # -----------------------
 # LOAD DATA
@@ -49,209 +50,108 @@ def load_models():
 
 @st.cache_data
 def load_data():
-    return pd.read_csv(CSV_FILE)
-
-
-# -----------------------
-# BUILD DATASET
-# -----------------------
-
-def build_dataset(df):
-
+    df = pd.read_csv(CSV_FILE)
+    # Prepare numbers
     number_cols = [c for c in df.columns if c not in ["draw_number","draw_date"]]
+    df["numbers"] = df[number_cols].apply(lambda row: [str(n).zfill(4) for n in row], axis=1)
 
-    numbers=[]
+    all_numbers = []
+    for _, row in df.iterrows():
+        all_numbers.extend(row["numbers"])
 
-    for _,row in df.iterrows():
+    dataset = pd.DataFrame({"number": all_numbers})
+    dataset["d1"] = dataset["number"].str[0].astype(int)
+    dataset["d2"] = dataset["number"].str[1].astype(int)
+    dataset["d3"] = dataset["number"].str[2].astype(int)
+    dataset["d4"] = dataset["number"].str[3].astype(int)
 
-        draw_nums=[]
-
-        for c in number_cols:
-            draw_nums.append(str(row[c]).zfill(4))
-
-        numbers.append(draw_nums)
-
-    df["numbers"]=numbers
-
-    all_numbers=[]
-    draw_idx=[]
-
-    for i,row in df.iterrows():
-
-        for n in row["numbers"]:
-            all_numbers.append(n)
-            draw_idx.append(i)
-
-    dataset=pd.DataFrame({
-        "draw":draw_idx,
-        "number":all_numbers
-    })
-
-    dataset["d1"]=dataset["number"].str[0].astype(int)
-    dataset["d2"]=dataset["number"].str[1].astype(int)
-    dataset["d3"]=dataset["number"].str[2].astype(int)
-    dataset["d4"]=dataset["number"].str[3].astype(int)
-
-    dataset["digit_sum"]=dataset[["d1","d2","d3","d4"]].sum(axis=1)
-
-    dataset["odd_count"]=(dataset[["d1","d2","d3","d4"]] % 2).sum(axis=1)
-
-    dataset["high_count"]=(dataset[["d1","d2","d3","d4"]] >=5).sum(axis=1)
-
-    dataset["repeat_count"]=dataset.apply(
-        lambda r: len([x for x in [r.d1,r.d2,r.d3,r.d4] if [r.d1,r.d2,r.d3,r.d4].count(x)>1]),
-        axis=1
+    # Optional features
+    dataset["digit_sum"] = dataset[["d1","d2","d3","d4"]].sum(axis=1)
+    dataset["odd_count"] = (dataset[["d1","d2","d3","d4"]] % 2).sum(axis=1)
+    dataset["high_count"] = (dataset[["d1","d2","d3","d4"]] >= 5).sum(axis=1)
+    dataset["repeat_count"] = dataset.apply(
+        lambda r: len([x for x in [r.d1,r.d2,r.d3,r.d4] if [r.d1,r.d2,r.d3,r.d4].count(x)>1]), axis=1
     )
-
     return dataset
 
-
 # -----------------------
-# BUILD FEATURES
-# -----------------------
-
-def build_prediction_features(dataset):
-
-    windows=[20,50,100,200]
-
-    i=len(dataset)
-
-    predict={}
-
-    for w in windows:
-
-        hist=dataset.iloc[i-w:i]
-
-        for digit in range(10):
-
-            for pos in ["d1","d2","d3","d4"]:
-
-                predict[f"freq_{digit}_{pos}_w{w}"]=(hist[pos]==digit).mean()
-
-        predict[f"sum_mean_w{w}"]=hist["digit_sum"].mean()
-        predict[f"sum_std_w{w}"]=hist["digit_sum"].std()
-
-        predict[f"odd_ratio_w{w}"]=hist["odd_count"].mean()
-        predict[f"high_ratio_w{w}"]=hist["high_count"].mean()
-        predict[f"repeat_ratio_w{w}"]=hist["repeat_count"].mean()
-
-    for digit in range(10):
-
-        for pos in ["d1","d2","d3","d4"]:
-
-            idx=dataset[dataset[pos]==digit].index
-            gap = 999 if len(idx)==0 else i-idx[-1]
-
-            predict[f"gap_{digit}_{pos}"]=gap
-
-    prev=dataset.iloc[-1]
-
-    predict["prev_d1"]=prev["d1"]
-    predict["prev_d2"]=prev["d2"]
-    predict["prev_d3"]=prev["d3"]
-    predict["prev_d4"]=prev["d4"]
-
-    return pd.DataFrame([predict]).fillna(0)
-
-
-# -----------------------
-# STREAMLIT UI
+# BUILD PROBABILITIES
 # -----------------------
 
-st.title("🎯 Singapore 4D AI Predictor")
+def build_digit_probs(dataset, windows=[20,50,100,200]):
+    """Calculate probabilistic predictions based on historical data."""
+    digit_probs = {}
+    for pos in ["d1","d2","d3","d4"]:
+        probs = np.zeros(10)
+        for w in windows:
+            hist = dataset[pos].iloc[-w:]
+            freq = hist.value_counts(normalize=True).reindex(range(10), fill_value=0)
+            probs += freq.values
+        digit_probs[pos] = normalize_probs(probs / len(windows))
 
-st.write("Machine learning ensemble using XGBoost + LSTM")
+        # recency weighting (boost digits that haven't appeared recently)
+        last_idx = {d: (dataset[dataset[pos]==d].index.max() if d in dataset[pos].values else -999) for d in range(10)}
+        recency_weight = np.array([1 / (1 + len(dataset) - last_idx[d]) for d in range(10)])
+        digit_probs[pos] = normalize_probs(0.8 * digit_probs[pos] + 0.2 * recency_weight)
+
+    return digit_probs
+
+# -----------------------
+# MONTE CARLO SAMPLING
+# -----------------------
+
+def monte_carlo_predict(digit_probs, n_samples=50000):
+    predictions = []
+    for _ in range(n_samples):
+        d1 = np.random.choice(np.arange(10), p=digit_probs["d1"])
+        d2 = np.random.choice(np.arange(10), p=digit_probs["d2"])
+        d3 = np.random.choice(np.arange(10), p=digit_probs["d3"])
+        d4 = np.random.choice(np.arange(10), p=digit_probs["d4"])
+        predictions.append(f"{d1}{d2}{d3}{d4}")
+    ranked = pd.Series(predictions).value_counts()
+    return ranked.head(50).reset_index().rename(columns={"index":"number","count":"freq"})
+
+# -----------------------
+# STREAMLIT APP
+# -----------------------
+
+st.set_page_config(page_title="Singapore 4D Predictor", layout="wide")
+st.title("🎯 Singapore 4D Probabilistic Predictor")
+
+st.write("""
+This app predicts Singapore 4D numbers using historical frequency and recency patterns.
+No heavy machine learning models needed—just probabilistic modeling and Monte Carlo simulation.
+""")
+
+dataset = load_data()
+
+# Allow user to optionally adjust window sizes
+with st.sidebar:
+    st.header("Settings")
+    w1 = st.number_input("Window 1 (recent draws)", min_value=5, max_value=200, value=20)
+    w2 = st.number_input("Window 2", min_value=10, max_value=500, value=50)
+    w3 = st.number_input("Window 3", min_value=50, max_value=1000, value=100)
+    w4 = st.number_input("Window 4", min_value=100, max_value=2000, value=200)
+    n_samples = st.number_input("Monte Carlo samples", min_value=1000, max_value=200000, value=50000)
+
+windows = [w1,w2,w3,w4]
 
 if st.button("Generate Prediction"):
-
-    with st.spinner("Loading models..."):
-
-        xgb_models, lstm_model, feature_columns = load_models()
-
-    df = load_data()
-
-    dataset = build_dataset(df)
-
-    X_pred = build_prediction_features(dataset)
-
-    X_pred = X_pred.reindex(columns=feature_columns, fill_value=0)
-
-    # -----------------------
-    # XGB PROBABILITIES
-    # -----------------------
-
-    digit_probs_xgb={}
-
-    for pos in ["d1","d2","d3","d4"]:
-
-        probs=xgb_models[pos].predict_proba(X_pred)[0]
-
-        digit_probs_xgb[pos]=normalize_probs(probs)
-
-    # -----------------------
-    # LSTM PROBABILITIES
-    # -----------------------
-
-    seq_len=30
-
-    seq_data=dataset[["d1","d2","d3","d4"]].values
-
-    seq_input=seq_data[-seq_len:].reshape(1,seq_len,4)
-
-    lstm_out=lstm_model.predict(seq_input)[0]
-
-    lstm_probs={
-    "d1":normalize_probs(lstm_out[0:10]),
-    "d2":normalize_probs(lstm_out[10:20]),
-    "d3":normalize_probs(lstm_out[20:30]),
-    "d4":normalize_probs(lstm_out[30:40])
-    }
-
-    # -----------------------
-    # ENSEMBLE
-    # -----------------------
-
-    digit_probs={}
-
-    for pos in ["d1","d2","d3","d4"]:
-
-        combined=(digit_probs_xgb[pos]*0.7 + lstm_probs[pos]*0.3)
-
-        digit_probs[pos]=normalize_probs(combined)
-
-    # -----------------------
-    # MONTE CARLO
-    # -----------------------
-
-    predictions=[]
-
-    for _ in range(50000):
-
-        d1=np.random.choice(np.arange(10),p=digit_probs["d1"])
-        d2=np.random.choice(np.arange(10),p=digit_probs["d2"])
-        d3=np.random.choice(np.arange(10),p=digit_probs["d3"])
-        d4=np.random.choice(np.arange(10),p=digit_probs["d4"])
-
-        predictions.append(f"{d1}{d2}{d3}{d4}")
-
-    ranked=pd.Series(predictions).value_counts()
-
-    result=ranked.head(50).reset_index()
-
-    result.columns=["number","freq"]
+    with st.spinner("Calculating probabilities and running Monte Carlo..."):
+        digit_probs = build_digit_probs(dataset, windows=windows)
+        top_predictions = monte_carlo_predict(digit_probs, n_samples=n_samples)
 
     st.subheader("Top 50 Predicted Numbers")
-
-    st.dataframe(result)
+    st.dataframe(top_predictions)
 
     st.subheader("Digit Probabilities")
-
-    prob_df=pd.DataFrame({
-        "Digit":list(range(10)),
-        "D1":digit_probs["d1"],
-        "D2":digit_probs["d2"],
-        "D3":digit_probs["d3"],
-        "D4":digit_probs["d4"]
+    prob_df = pd.DataFrame({
+        "Digit": list(range(10)),
+        "D1": digit_probs["d1"],
+        "D2": digit_probs["d2"],
+        "D3": digit_probs["d3"],
+        "D4": digit_probs["d4"]
     })
-
     st.bar_chart(prob_df.set_index("Digit"))
+
+    st.success("Prediction complete!")
