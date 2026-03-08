@@ -1,19 +1,10 @@
-# Streamlit app and UI
 streamlit==1.27.0
-
-# Data processing
 pandas==2.0.3
 numpy==1.26.0
 joblib==1.5.3
-
-# Machine learning
 scikit-learn==1.3.2
-xgboost==1.7.6          # Latest confirmed wheel for Python 3.14
-tensorflow==2.21.0rc1   # Pre-release supporting Python 3.14
-
-# Web scraping
+xgboost==1.8.3
+tensorflow==2.21.0
 beautifulsoup4==4.13.0
 requests==2.32.0
-
-# Visualization
 matplotlib==3.8.0
