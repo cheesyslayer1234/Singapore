@@ -116,35 +116,57 @@ def monte_carlo_predict(digit_probs, n_samples=50000):
 # -----------------------
 
 st.set_page_config(page_title="Singapore 4D Predictor", layout="wide")
-st.title("🎯 Singapore 4D Probabilistic Predictor")
+st.markdown("<h1 style='text-align: center; font-size: 3rem;'>🎯 Singapore 4D Probabilistic Predictor</h1>", unsafe_allow_html=True)
 
-st.write("""
-This app predicts Singapore 4D numbers using historical frequency and recency patterns.
-No heavy machine learning models needed—just probabilistic modeling and Monte Carlo simulation.
-""")
+st.markdown("""
+<p style='text-align: center; font-size: 1.2rem;'>
+Predict Singapore 4D numbers using historical frequency and recency patterns.<br>
+No heavy machine learning required—just probabilistic modeling and Monte Carlo simulation.
+</p>
+""", unsafe_allow_html=True)
 
 dataset = load_data()
 
-# Allow user to optionally adjust window sizes
+# -----------------------
+# SIDEBAR SETTINGS
+# -----------------------
+
 with st.sidebar:
-    st.header("Settings")
+    st.header("Settings & Explanation")
+    st.markdown("""
+    <p style='font-size:0.9rem;'>
+    Adjust the historical windows for probability calculation:
+    </p>
+    <ul style='font-size:0.9rem;'>
+        <li><b>Window 1:</b> Recent draws (e.g., 20 most recent)</li>
+        <li><b>Window 2:</b> Slightly longer history</li>
+        <li><b>Window 3:</b> Medium-term history</li>
+        <li><b>Window 4:</b> Long-term history</li>
+    </ul>
+    <p style='font-size:0.9rem;'>Increasing windows makes predictions rely more on long-term trends.</p>
+    """, unsafe_allow_html=True)
+
     w1 = st.number_input("Window 1 (recent draws)", min_value=5, max_value=200, value=20)
     w2 = st.number_input("Window 2", min_value=10, max_value=500, value=50)
     w3 = st.number_input("Window 3", min_value=50, max_value=1000, value=100)
     w4 = st.number_input("Window 4", min_value=100, max_value=2000, value=200)
     n_samples = st.number_input("Monte Carlo samples", min_value=1000, max_value=200000, value=50000)
 
-windows = [w1,w2,w3,w4]
+windows = [w1, w2, w3, w4]
+
+# -----------------------
+# GENERATE PREDICTION
+# -----------------------
 
 if st.button("Generate Prediction"):
     with st.spinner("Calculating probabilities and running Monte Carlo..."):
         digit_probs = build_digit_probs(dataset, windows=windows)
         top_predictions = monte_carlo_predict(digit_probs, n_samples=n_samples)
 
-    st.subheader("Top 50 Predicted Numbers")
-    st.dataframe(top_predictions)
+    st.markdown("<h2 style='text-align: center;'>Top 50 Predicted Numbers</h2>", unsafe_allow_html=True)
+    st.dataframe(top_predictions, height=500)
 
-    st.subheader("Digit Probabilities")
+    st.markdown("<h2 style='text-align: center;'>Digit Probabilities</h2>", unsafe_allow_html=True)
     prob_df = pd.DataFrame({
         "Digit": list(range(10)),
         "D1": digit_probs["d1"],
@@ -154,4 +176,4 @@ if st.button("Generate Prediction"):
     })
     st.bar_chart(prob_df.set_index("Digit"))
 
-    st.success("Prediction complete!")
+    st.success("✅ Prediction complete!")
