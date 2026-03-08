@@ -1,10 +1,10 @@
-streamlit==1.25.0
-pandas==2.0.3
-numpy==1.26.0
-joblib==1.5.3
-scikit-learn==1.3.0
-xgboost==1.8.2
-tensorflow==2.20.0
+streamlit==1.27.0          # Latest with Python 3.14 support
+pandas==2.0.3              # Last version with prebuilt wheel for 3.14
+numpy==1.26.0               # Prebuilt wheel for 3.14
+joblib==1.5.3               # Compatible
+scikit-learn==1.3.2         # Prebuilt wheel for 3.14
+xgboost==1.8.3              # Latest wheel supporting Python 3.14
+tensorflow==2.21.0rc1       # Pre-release wheel for Python 3.14
 beautifulsoup4==4.13.0
 requests==2.32.0
-matplotlib==3.7.2
+matplotlib==3.8.0
